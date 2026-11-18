@@ -6,7 +6,7 @@ even when the CRM is down.
 
 Built as a demo for [Huvo AI](https://huvo.ai): speed-to-lead only works if the plumbing behind it is reliable.
 
-**Live demo:** https://huvo-lead-gateway.onrender.com (free tier: first load after idle takes ~50s) · **90s walkthrough:** _[add your Loom link]_
+**Live demo:** https://huvo-lead-gateway.onrender.com (free tier: first load after idle takes ~50s) · **42s demo video:** https://drive.google.com/file/d/1PN-pSUc0N9glSa98FnzjSB_cRsICnVp3/view
 
 ## What it handles
 
