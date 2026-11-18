@@ -1,0 +1,14 @@
+# Render Blueprint: Render reads this file and creates the web service.
+services:
+  - type: web
+    name: huvo-lead-gateway
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /leads
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL   # Postgres connection string (e.g. from Neon); Render asks for it on first deploy
+        sync: false

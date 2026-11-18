@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lead Intake Gateway</title>
+<style>
+  :root {
+    --bg:#ffffff; --ink:#222428; --muted:#61666d; --line:#e3e5e8; --row:#f7f8f9;
+    --blue:#2f6fb7; --blue-dark:#245a95; --green:#2e9b47; --green-text:#1f7a36; --red:#d7262e; --slate:#6b7380; --amber:#f3c300;
+    --red-bg:#fdf1f1; --focus:#2f6fb7;
+    scrollbar-color:#b9bfc6 transparent;
+  }
+  * { box-sizing:border-box; }
+  ::selection { background:#d9e6f6; color:var(--ink); }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button { font:inherit; cursor:pointer; }
+  button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; min-height:68px; padding:12px 40px;
+           border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:22px; letter-spacing:-0.01em; }
+  .live { display:inline-flex; align-items:center; gap:7px; color:var(--muted); font-size:14px; font-variant-numeric:tabular-nums; }
+  .live::before { content:""; width:9px; height:9px; border-radius:50%; background:var(--green); }
+  .live.down { color:var(--red); }
+  .live.down::before { background:var(--red); }
+  #burst { margin-left:auto; background:var(--blue); color:#fff; border:0; border-radius:6px; padding:11px 18px; font-weight:600;
+           transition:background-color .15s; }
+  #burst:hover { background:var(--blue-dark); }
+  #burst:disabled { opacity:.6; cursor:default; }
+  #log { margin:0; padding:10px 40px 0; min-height:31px; font-size:14px; color:var(--muted); }
+  #log.ok { color:var(--green-text); font-weight:600; }
+  #log.bad { color:var(--red); }
+
+  /* ---- The metro map: drawn at map scale so it reads in a small, compressed recording ---- */
+  .map-wrap { padding:0 40px; }
+  .map { position:relative; }
+  .map svg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
+  .stn { position:absolute; z-index:1; width:48px; height:48px; margin:-24px 0 0 -24px; border-radius:50%; background:#fff; border:10px solid; }
+  .lbl { position:absolute; white-space:nowrap; line-height:1.25; }
+  .lbl b { font-size:22px; }
+  .lbl .count { font-size:26px; font-weight:800; margin-left:8px; font-variant-numeric:tabular-nums; }
+  .lbl .count.zero { color:var(--muted); font-weight:600; }
+  .lbl small { display:block; margin-top:2px; color:var(--muted); font-size:14px; }
+  .lbl .dupes { color:var(--green-text); font-weight:600; }
+  .terminus { position:absolute; font-size:36px; font-weight:800; color:var(--green-text); font-variant-numeric:tabular-nums; }
+  .train { position:absolute; z-index:2; height:32px; min-width:46px; padding:0 8px; margin-top:-16px; border-radius:7px;
+           background:var(--amber); border:2px solid var(--ink); color:var(--ink); font:800 15px/28px system-ui, sans-serif;
+           text-align:center; font-variant-numeric:tabular-nums; white-space:nowrap;
+           transition:left .9s cubic-bezier(.16,1,.3,1), top .9s cubic-bezier(.16,1,.3,1); }
+  .train.retry { border-style:dashed; }
+  .train.dead { background:var(--red); border-color:#8f1219; color:#fff; }
+  .train.more { background:#fff; border-color:var(--muted); color:var(--ink); }
+  .train.gone { opacity:0; transition:opacity .4s; }
+  @media (prefers-reduced-motion: reduce) { .train { transition:none; } }
+
+  /* ---- The lead table ---- */
+  .table-wrap { margin:8px 40px 40px; overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+  table { width:100%; min-width:900px; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:12px 14px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-size:13px; font-weight:600; background:var(--row); }
+  th.num, td.num { text-align:right; }
+  tbody tr:last-child td { border-bottom:0; }
+  tr.failed td { background:var(--red-bg); }
+  .stop { display:inline-flex; align-items:center; gap:8px; font-weight:600; }
+  .stop::before { content:""; width:12px; height:12px; border-radius:50%; background:#fff; border:3px solid var(--dot, var(--blue)); }
+  .detail { color:var(--muted); font-size:14px; max-width:320px; overflow:hidden; text-overflow:ellipsis; }
+  .detail.err { color:var(--red); }
+  .act button { background:#fff; color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:6px 12px; }
+  .act button:hover { border-color:var(--muted); }
+  .act button:disabled { opacity:.6; cursor:default; }
+  .empty { padding:36px 16px; text-align:center; color:var(--muted); white-space:normal; }
+  @keyframes changed { from { background:#fff8d6; } to { background:transparent; } }
+  tr.changed td { animation:changed 1s cubic-bezier(.16,1,.3,1); }
+  @media (prefers-reduced-motion: reduce) { tr.changed td { animation:none; } }
+
+  @media (max-width:720px) {
+    header, #log { padding-left:16px; padding-right:16px; }
+    #burst { margin-left:0; width:100%; }
+    .map-wrap { padding:0 16px; }
+    .lbl b { font-size:18px; }
+    .lbl .count { font-size:20px; margin-left:6px; }
+    .lbl small { font-size:13px; }
+    .lbl.left { white-space:normal; max-width:118px; text-align:right; }
+    .table-wrap { margin:8px 16px 32px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lead Intake Gateway</h1>
+  <span class="live" id="live" role="status">Connecting…</span>
+  <button id="burst">Send 6 test leads (incl. a duplicate)</button>
+</header>
+<p id="log" aria-live="polite"></p>
+
+<div class="map-wrap">
+  <section class="map" id="map" aria-label="Lead pipeline map: how many leads are at each stage"></section>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th class="num">#</th><th>Station</th><th>Name</th><th>Phone (cleaned)</th><th>Source</th>
+      <th>Call outcome</th><th class="num">CRM attempts</th><th>Detail</th><th aria-label="Actions"></th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script>
+// ---- The line: stations and which API statuses stop there ----
+const STATIONS = {
+  received: { name: "Received",       note: "cleaned + deduped",  color: "--blue",  statuses: ["queued"] },
+  calling:  { name: "Calling",        note: "AI voice agent",     color: "--blue",  statuses: ["calling"] },
+  called:   { name: "Called",         note: "outcome recorded",   color: "--blue",  statuses: ["called"] },
+  crm:      { name: "CRM sync",       note: "retries 2·4·8·16s",  color: "--green", statuses: ["syncing", "sync_retry"] },
+  done:     { name: "In CRM",         note: "delivered",          color: "--green", statuses: ["synced"], terminus: true },
+  night:    { name: "Held till 9:00", note: "TRAI calling hours", color: "--slate", statuses: ["scheduled"], branch: true },
+  dead:     { name: "Gave up",        note: "after 5 CRM tries",  color: "--red",   statuses: ["failed"], branch: true },
+};
+const MAIN = [["received", "called", "--blue"], ["called", "done", "--green"]];
+const BRANCHES = [["received", "night", "--slate"], ["crm", "dead", "--red"]];
+const STATION_OF = {};
+for (const [key, s] of Object.entries(STATIONS)) s.statuses.forEach(st => STATION_OF[st] = key);
+const STATUS_LABEL = { queued: "Received", scheduled: "Held till 9:00", calling: "Calling", called: "Called",
+                       syncing: "Syncing to CRM", sync_retry: "CRM retrying", synced: "In CRM", failed: "Gave up" };
+const OUTCOME = { interested: "Interested", site_visit_booked: "Site visit booked", not_interested: "Not interested", no_answer: "No answer" };
+const IST_TIME = { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" };
+const SVGNS = "http://www.w3.org/2000/svg";
+
+const map = document.getElementById("map");
+let geo = null;            // current layout
+let lastLeads = [];
+let dupesBlocked = 0;      // counted from this browser session's test sends, not from the API
+const counts = {};
+let dupeEl = null;
+
+function el(tag, className, text) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text;  // textContent only: lead data comes from outside (XSS-safe)
+  return e;
+}
+
+// Wide screens: a horizontal line with branches dropping below. Narrow screens: the line runs top to bottom,
+// like the strip map inside a train car, so the whole journey fits a phone with no sideways scrolling.
+function geometry(w) {
+  if (w >= 760) {
+    const X = { received: .05, calling: .26, called: .47, crm: .68, done: .94, night: .15, dead: .78 };
+    const pos = {};
+    for (const k in X) pos[k] = { x: Math.round(w * X[k]), y: STATIONS[k].branch ? 262 : 122 };
+    const seg = w * .21;
+    return { vertical: false, pos, height: 362, slots: Math.max(1, Math.floor((seg - 104) / 52) + 1), slotsBranch: 3 };
+  }
+  const Y = { received: 44, night: 128, calling: 240, called: 344, crm: 448, dead: 532, done: 644 };
+  const pos = {};
+  for (const k in Y) pos[k] = { x: STATIONS[k].branch ? 190 : 150, y: Y[k] };
+  return { vertical: true, pos, height: 700, slots: Math.max(1, Math.floor((w - 180 - 46) / 52) + 1), slotsBranch: 2 };
+}
+
+function trainSpot(key, i) {
+  const p = geo.pos[key];
+  return { x: p.x + (geo.vertical ? 30 : 36) + i * 52, y: p.y };
+}
+
+function drawMap() {
+  const w = map.clientWidth;
+  geo = geometry(w);
+  map.style.height = geo.height + "px";
+  [...map.children].forEach(c => { if (!c.classList.contains("train")) c.remove(); });
+
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("aria-hidden", "true");
+  const path = (d, color) => {
+    const p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", d); p.setAttribute("fill", "none"); p.setAttribute("stroke-width", "14");
+    p.setAttribute("stroke-linecap", "round"); p.style.stroke = `var(${color})`;
+    svg.append(p);
+  };
+  for (const [a, b, c] of MAIN) { const A = geo.pos[a], B = geo.pos[b]; path(`M${A.x} ${A.y} L${B.x} ${B.y}`, c); }
+  for (const [a, b, c] of BRANCHES) {
+    const A = geo.pos[a], B = geo.pos[b];
+    path(geo.vertical ? `M${A.x} ${A.y} C${A.x} ${A.y + 50} ${B.x} ${B.y - 44} ${B.x} ${B.y}`
+                      : `M${A.x} ${A.y} L${A.x} ${B.y - 48} Q${A.x} ${B.y} ${A.x + 48} ${B.y} L${B.x} ${B.y}`, c);
+  }
+  map.append(svg);
+
+  for (const [key, s] of Object.entries(STATIONS)) {
+    const p = geo.pos[key];
+    const stn = el("div", "stn");
+    stn.style.left = p.x + "px"; stn.style.top = p.y + "px"; stn.style.borderColor = `var(${s.color})`;
+
+    const lbl = el("div", "lbl");
+    const count = el("span", "count zero", "0");
+    lbl.append(el("b", "", s.name));
+    if (!s.terminus) lbl.append(count);
+    lbl.append(el("small", "", s.note));
+    if (key === "received") { dupeEl = el("small", "dupes"); lbl.append(dupeEl); }
+
+    if (s.branch) {                                   // below the roundel, reading from its left edge
+      lbl.style.left = (p.x - 24) + "px"; lbl.style.top = (p.y + 32) + "px";
+    } else if (geo.vertical) {                        // left of the line, right-aligned
+      lbl.classList.add("left");
+      lbl.style.left = (p.x - 34) + "px"; lbl.style.top = p.y + "px"; lbl.style.transform = "translate(-100%, -50%)";
+    } else {                                          // above the roundel; end stations align to the edge
+      lbl.style.top = (p.y - 34) + "px";
+      const tx = key === "received" ? "-24px" : key === "done" ? "calc(-100% + 24px)" : "-50%";
+      lbl.style.left = p.x + "px"; lbl.style.transform = `translate(${tx}, -100%)`;
+      lbl.style.textAlign = key === "received" ? "left" : key === "done" ? "right" : "center";
+    }
+    map.append(stn, lbl);
+
+    if (s.terminus) {
+      const t = el("div", "terminus", "0");
+      if (geo.vertical) { t.style.left = (p.x + 36) + "px"; t.style.top = p.y + "px"; t.style.transform = "translateY(-50%)"; }
+      else { t.style.left = p.x + "px"; t.style.top = (p.y + 30) + "px"; t.style.transform = "translateX(-50%)"; }
+      map.append(t);
+      counts[key] = t;
+    } else counts[key] = count;
+  }
+  updateDupes();
+  placeTrains(lastLeads);
+}
+
+function updateDupes() {
+  if (dupeEl) dupeEl.textContent = dupesBlocked ? `${dupesBlocked} duplicate${dupesBlocked > 1 ? "s" : ""} blocked this session` : "";
+}
+
+// ---- Trains: one chip per lead, kept by id so a status change glides it to the next station ----
+const trains = new Map();   // lead id -> chip element
+const moreChips = {};
+
+function placeTrains(leads) {
+  if (!geo) return;
+  const byStation = {};
+  for (const l of leads) (byStation[STATION_OF[l.status]] ||= []).push(l);
+  const seen = new Set();
+
+  for (const [key, s] of Object.entries(STATIONS)) {
+    const here = (byStation[key] || []).sort((a, b) => a.id - b.id);
+    const n = here.length;
+    counts[key].textContent = n;
+    counts[key].classList.toggle("zero", n === 0 && !s.terminus);
+    if (s.terminus) continue;  // the terminus shows a count; delivered leads leave the line
+
+    const slots = s.branch ? geo.slotsBranch : geo.slots;
+    const shown = n > slots ? slots - 1 : n;  // keep the last slot for a "+N" chip
+    here.slice(0, shown).forEach((l, i) => {
+      const spot = trainSpot(key, i);
+      let t = trains.get(l.id);
+      if (!t) {
+        t = el("div", "train");
+        t.style.left = spot.x + "px"; t.style.top = spot.y + "px";  // new trains appear at their station
+        map.append(t); trains.set(l.id, t);
+      }
+      t.textContent = "#" + l.id;
+      t.className = "train" + (l.status === "sync_retry" ? " retry" : "") + (l.status === "failed" ? " dead" : "");
+      t.title = `${l.name} · ${STATUS_LABEL[l.status]}`;
+      t.style.left = spot.x + "px"; t.style.top = spot.y + "px";
+      seen.add(l.id);
+    });
+
+    let more = moreChips[key];
+    if (n > shown) {
+      if (!more) { more = moreChips[key] = el("div", "train more"); map.append(more); }
+      const spot = trainSpot(key, shown);
+      more.textContent = "+" + (n - shown);
+      more.style.left = spot.x + "px"; more.style.top = spot.y + "px";
+    } else if (more) { more.remove(); delete moreChips[key]; }
+  }
+
+  const end = geo.pos.done;
+  for (const [id, t] of trains) {  // delivered (or folded into "+N"): glide into the terminus, then fade
+    if (seen.has(id)) continue;
+    trains.delete(id);
+    t.style.left = (end.x - 22) + "px"; t.style.top = end.y + "px";
+    setTimeout(() => t.classList.add("gone"), 700);
+    setTimeout(() => t.remove(), 1200);
+  }
+}
+
+// ---- Table: rows kept and updated in place (a rebuild would drop clicks and keyboard focus) ----
+const rowCache = new Map();  // lead id -> { sig, tr, detailCell }
+
+function shortError(err) {
+  const m = err && err.match(/'(\d{3}) ([^']+)'/);
+  return m ? `CRM ${m[1]} ${m[2]}` : (err || "").split(":")[0];
+}
+
+function detail(l) {
+  if (l.status === "scheduled")
+    return { text: "Calls at " + new Date(l.next_attempt_at).toLocaleString("en-IN",
+             { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) + " IST" };
+  if (l.status === "sync_retry") {
+    const secs = Math.max(0, Math.round((new Date(l.next_attempt_at) - Date.now()) / 1000));
+    return { text: `${shortError(l.last_error)} · retrying ${secs ? "in " + secs + "s" : "now"}`, err: true, title: l.last_error };
+  }
+  if (l.status === "failed") return { text: `${shortError(l.last_error)} · gave up`, err: true, title: l.last_error };
+  return { text: "" };
+}
+
+function td(text, className) { return el("td", className, text ?? ""); }
+
+function buildRow(l, statusChanged) {
+  const tr = el("tr", (l.status === "failed" ? "failed " : "") + (statusChanged ? "changed" : ""));
+  const stop = el("span", "stop", STATUS_LABEL[l.status] || l.status);
+  stop.style.setProperty("--dot", `var(${STATIONS[STATION_OF[l.status]].color})`);
+  const stopCell = td(""); stopCell.append(stop);
+
+  const d = detail(l);
+  const detailCell = td(d.text, "detail" + (d.err ? " err" : ""));
+  if (d.title) detailCell.title = d.title;
+
+  const act = td("", "act");
+  if (l.status === "failed") {
+    const b = el("button", "", "Retry");
+    b.setAttribute("aria-label", `Retry CRM sync for lead ${l.id}`);
+    b.onclick = async () => {
+      b.textContent = "Retrying…"; b.disabled = true;  // the row is rebuilt once the status changes
+      try { const r = await fetch(`/leads/${l.id}/retry`, { method: "POST" }); if (!r.ok) throw new Error(r.status); }
+      catch (e) { b.textContent = "Retry failed · try again"; b.disabled = false; }
+    };
+    act.append(b);
+  }
+  tr.append(td(l.id, "num"), stopCell, td(l.name), td(l.phone), td(l.source),
+            td(OUTCOME[l.outcome] || l.outcome), td(l.sync_attempts, "num"), detailCell, act);
+  return { tr, detailCell };
+}
+
+function renderTable(leads) {
+  const body = document.getElementById("rows");
+  if (!leads.length) {
+    rowCache.clear();
+    const cell = td('No leads yet. Click "Send 6 test leads" and watch them ride the line.', "empty");
+    cell.colSpan = 9;
+    const tr = el("tr"); tr.append(cell);
+    body.replaceChildren(tr);
+    return;
+  }
+  leads.forEach((l, i) => {
+    const sig = [l.status, l.outcome, l.sync_attempts, l.last_error, l.next_attempt_at].join("|");
+    let row = rowCache.get(l.id);
+    if (!row || row.sig !== sig) {
+      const fresh = buildRow(l, !!row && row.sig.split("|")[0] !== l.status);
+      if (row) row.tr.replaceWith(fresh.tr);
+      row = { sig, ...fresh };
+      rowCache.set(l.id, row);
+    } else {
+      row.detailCell.textContent = detail(l).text;  // only the retry countdown ticks
+    }
+    if (body.children[i] !== row.tr) body.insertBefore(row.tr, body.children[i] || null);
+  });
+  while (body.children.length > leads.length) body.lastElementChild.remove();
+}
+
+// ---- Polling every second: simplest live view; fine for a dashboard with a few viewers ----
+const live = document.getElementById("live");
+async function refresh() {
+  try {
+    const r = await fetch("/leads");
+    if (!r.ok) throw new Error(r.status);
+    lastLeads = await r.json();
+    placeTrains(lastLeads);
+    renderTable(lastLeads);
+    live.className = "live";
+    live.textContent = "Live · updated " + new Date().toLocaleTimeString("en-IN", IST_TIME) + " IST";
+  } catch (e) {
+    live.className = "live down";
+    live.textContent = "Can't reach the server · retrying";
+  }
+}
+let lastWidth = 0;
+new ResizeObserver(() => { if (map.clientWidth !== lastWidth) { lastWidth = map.clientWidth; drawMap(); } }).observe(map);
+setInterval(refresh, 1000);
+refresh();
+
+// ---- Demo button: the same phone typed 3 ways shows normalisation + dedupe at once ----
+const burst = document.getElementById("burst");
+const log = document.getElementById("log");
+const BURST_LABEL = burst.textContent;
+burst.onclick = async () => {
+  const n = () => String(6 + Math.floor(Math.random() * 4)) + String(Math.floor(Math.random() * 1e9)).padStart(9, "0");
+  const dupe = n();
+  const leads = [
+    { name: "Aarav Mehta", phone: dupe, source: "meta" },
+    { name: "Priya Nair",  phone: "+91 " + n(), source: "99acres" },
+    { name: "Rohan Gupta", phone: n(), source: "website" },
+    { name: "Aarav M.",    phone: "+91-" + dupe.slice(0, 5) + "-" + dupe.slice(5), source: "housing.com" },
+    { name: "Sneha Iyer",  phone: "0" + n(), source: "meta" },
+    { name: "Aarav Mehta", phone: dupe.slice(0, 5) + " " + dupe.slice(5), source: "meta" },
+  ];
+  burst.disabled = true; burst.textContent = "Sending…";
+  log.className = ""; log.textContent = "";
+  try {
+    const results = [];
+    for (const lead of leads) {
+      const r = await fetch("/leads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(lead) });
+      if (!r.ok) throw new Error(`server returned ${r.status}`);
+      results.push((await r.json()).status);
+    }
+    const dupes = results.filter(s => s === "duplicate").length;
+    dupesBlocked += dupes;
+    updateDupes();
+    log.className = "ok";
+    log.textContent = `Sent ${leads.length} leads: ${leads.length - dupes} new, ${dupes} duplicates blocked.`;
+  } catch (e) {
+    log.className = "bad";
+    log.textContent = `Couldn't send test leads (${e.message}). Check the server is running, then try again.`;
+  } finally {
+    burst.disabled = false; burst.textContent = BURST_LABEL;
+    refresh();
+  }
+};
+</script>
+</body>
+</html>
