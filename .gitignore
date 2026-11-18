@@ -1,8 +1,12 @@
 __pycache__/
 .venv/
 *.db
+.env
+.env.*
 .pytest_cache/
 .impeccable/
 # private interview prep, not part of the public repo
 NOTES.md
 LOOM.md
+.neon
+node_modules/
